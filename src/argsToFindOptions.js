@@ -31,6 +31,13 @@ export default function argsToFindOptions(args, targetAttributes) {
         result.where = replaceWhereOperators(args.where);
       }
 
+      if (key === 'include' && args[key]) {
+        if (!Array.isArray(args.include)) {
+          throw Error(`include must be an Array but got ${args.include}`);
+        }
+        result.include = replaceWhereOperators(args.include);
+      }
+
     });
   }
 

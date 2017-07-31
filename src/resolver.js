@@ -3,15 +3,34 @@ import _ from 'lodash';
 import argsToFindOptions from './argsToFindOptions';
 import { isConnection, handleConnection, nodeType } from './relay';
 import invariant from 'assert';
-import Promise from 'bluebird';
 import dataLoaderSequelize from 'dataloader-sequelize';
 
 function whereQueryVarsToValues(o, vals) {
-  _.forEach(o, (v, k) => {
-    if (typeof v === 'function') {
-      o[k] = o[k](vals);
-    } else if (v && typeof v === 'object') {
-      whereQueryVarsToValues(v, vals);
+  if (!_.isEmpty(vals)) {
+    convert(o, vals);
+  }
+
+  function convert(o) {
+    _.forEach(o, (v, k) => {
+      if (typeof v === 'function') {
+        o[k] = o[k](vals);
+      } else if (v && typeof v === 'object') {
+        convert(v);
+      }
+    });
+  }
+}
+
+function fulfillIncludesWithModels(includes, model) {
+  if (!_.isArray(includes)) return;
+  includes.forEach(included => {
+    if (_.isString(included.model)) {
+      // todo add good error message for bad non-find
+      const association = _.find(model.associations, a => a.options.name.singular === included.model);
+      included.model = association.target;
+      included.as = association.options.as;
+      // todo test conversion of inner includes
+      fulfillIncludesWithModels(included.include, association.target);
     }
   });
 }
@@ -19,8 +38,7 @@ function whereQueryVarsToValues(o, vals) {
 function resolverFactory(target, options) {
   dataLoaderSequelize(target);
 
-  var resolver
-    , targetAttributes
+  let targetAttributes
     , isModel = !!target.getTableName
     , isAssociation = !!target.associationType
     , association = isAssociation && target
@@ -35,18 +53,14 @@ function resolverFactory(target, options) {
   if (options.after === undefined) options.after = (result) => result;
   if (options.handleConnection === undefined) options.handleConnection = true;
 
-  resolver = function (source, args, context, info) {
-    var type = info.returnType
+  return async (source, args, context = {}, info) => {
+    whereQueryVarsToValues(args.where, info.variableValues);
+    fulfillIncludesWithModels(args.include, model);
+    let type = info.returnType
       , list = options.list || type instanceof GraphQLList
       , findOptions = argsToFindOptions(args, targetAttributes);
 
-    info = {
-      ...info,
-      type: type,
-      source: source
-    };
-
-    context = context || {};
+    info = {...info, type, source};
 
     if (isConnection(type)) {
       type = nodeType(type);
@@ -57,42 +71,23 @@ function resolverFactory(target, options) {
     findOptions.attributes = targetAttributes;
     findOptions.logging = findOptions.logging || context.logging;
 
-    return Promise.resolve(options.before(findOptions, args, context, info)).then(function (findOptions) {
-      if (args.where && !_.isEmpty(info.variableValues)) {
-        whereQueryVarsToValues(args.where, info.variableValues);
-        whereQueryVarsToValues(findOptions.where, info.variableValues);
+    findOptions = await options.before(findOptions, args, context, info);
+    if (list && !findOptions.order) {
+      findOptions.order = [[model.primaryKeyAttribute, 'ASC']];
+    }
+
+    let result;
+    if (association) {
+      result = await source[association.accessors.get](findOptions);
+      if (options.handleConnection && isConnection(info.returnType)) {
+        result = handleConnection(result, args);
       }
+    } else {
+      result = await model[list ? 'findAll' : 'findOne'](findOptions);
+    }
 
-      if (list && !findOptions.order) {
-        findOptions.order = [[model.primaryKeyAttribute, 'ASC']];
-      }
-
-      if (association) {
-        if (source.get(association.as) !== undefined) {
-          // The user did a manual include
-          const result = source.get(association.as);
-          if (options.handleConnection && isConnection(info.returnType)) {
-            return handleConnection(result, args);
-          }
-
-          return result;
-        } else {
-          return source[association.accessors.get](findOptions).then(function (result) {
-            if (options.handleConnection && isConnection(info.returnType)) {
-              return handleConnection(result, args);
-            }
-            return result;
-          });
-        }
-      }
-
-      return model[list ? 'findAll' : 'findOne'](findOptions);
-    }).then(function (result) {
-      return options.after(result, args, context, info);
-    });
+    return options.after(result, args, context, info);
   };
-
-  return resolver;
 }
 
 module.exports = resolverFactory;
