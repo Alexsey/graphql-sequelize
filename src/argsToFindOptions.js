@@ -14,6 +14,7 @@ function fulfillIncludesWithModels(includes, model, allowedIncludes = {}) {
 
       included.model = association.target;
       included.as = association.options.as;
+      included.required = true;
       fulfillIncludesWithModels(included.include, association.target, allowedIncludes);
     }
   });
