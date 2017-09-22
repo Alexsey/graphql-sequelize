@@ -23,6 +23,10 @@ function getDeeplyAssociatedModels(model) {
   return deeplyAssociatedModels;
 }
 
+function isArrayOfArrays(obj) {
+  return Array.isArray(obj) && Array.isArray(obj[0]);
+}
+
 function resolverFactory(target, options = {}) {
   dataLoaderSequelize(target);
 
@@ -32,7 +36,7 @@ function resolverFactory(target, options = {}) {
     , association = isAssociation && target
     , model = isAssociation && target.target || isModel && target;
 
-  targetAttributes = Object.keys(model.rawAttributes);
+  targetAttributes = _.get(model, '_scope.attributes', Object.keys(model.rawAttributes));
 
   options = _.cloneDeep(options);
 
@@ -58,6 +62,16 @@ function resolverFactory(target, options = {}) {
     let type = info.returnType
       , list = options.list || type instanceof GraphQLList
       , findOptions = argsToFindOptions(args, targetAttributes, model, options.allowedIncludes);
+
+    if (_.get(model, '_scope.order')) {
+      if (!findOptions.order) {
+        findOptions.order = model._scope.order;
+      } else if (isArrayOfArrays(model._scope.order)) {
+        findOptions.order = [...model._scope.order, ...findOptions.order];
+      } else {
+        findOptions.order = [model._scope.order, ...findOptions.order];
+      }
+    }
 
     info = {...info, type, source};
 

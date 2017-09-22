@@ -1,10 +1,12 @@
 import * as typeMapper from './typeMapper';
+import _ from 'lodash';
 import { GraphQLNonNull, GraphQLEnumType } from 'graphql';
 import { globalIdField } from 'graphql-relay';
 
 module.exports = function (Model, options = {}) {
   var cache = options.cache || {};
-  var result = Object.keys(Model.rawAttributes).reduce(function (memo, key) {
+  var attributesList = _.get(Model, '_scope.attributes', Object.keys(Model.rawAttributes));
+  var result = attributesList.reduce(function (memo, key) {
     if (options.exclude) {
       if (typeof options.exclude === 'function' && options.exclude(key)) return memo;
       if (Array.isArray(options.exclude) && ~options.exclude.indexOf(key)) return memo;
